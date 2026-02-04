@@ -5,8 +5,16 @@ from __future__ import annotations
 import argparse
 import sys
 from pathlib import Path
+from typing import Callable
 
 from datasets import Dataset, DatasetDict, load_from_disk
+try:
+    from toon_format import encode
+except Exception as exc:  # pragma: no cover - 외부 패키지 로드 실패 대비
+    encode = None
+    _ENCODE_ERROR: Exception | None = exc
+else:
+    _ENCODE_ERROR = None
 
 
 def _human_bytes(num_bytes: int) -> str:
@@ -118,6 +126,38 @@ def _summarize_dataset(
     return dataset_dir, total_bytes, splits, schema_lines, sample_lines
 
 
+def _build_dataset_record(
+    path: Path,
+    total_bytes: int,
+    splits: list[str] | None,
+    schema_lines: list[str],
+    sample_lines: list[str],
+) -> dict[str, object]:
+    """TOON 출력용 데이터셋 레코드를 구성합니다."""
+
+    return {
+        "path": str(path),
+        "totalSize": _human_bytes(total_bytes),
+        "splits": splits,
+        "schema": schema_lines,
+        "sample": sample_lines,
+    }
+
+
+def _require_encoder() -> Callable[[object], str]:
+    """TOON 인코더를 준비합니다."""
+
+    if encode is None:
+        detail = "" if _ENCODE_ERROR is None else f" ({_ENCODE_ERROR})"
+        message = (
+            "오류: toon_format을 불러올 수 없습니다."
+            f"{detail}\\n"
+            "설치 방법: pip install git+https://github.com/toon-format/toon-python.git"
+        )
+        raise RuntimeError(message)
+    return encode
+
+
 def _build_parser() -> argparse.ArgumentParser:
     """CLI 파서를 구성합니다."""
 
@@ -151,27 +191,17 @@ def main(argv: list[str] | None = None) -> int:
     if args.limit is not None:
         dataset_dirs = dataset_dirs[: args.limit]
 
-    if not dataset_dirs:
-        print("raw 데이터셋 디렉터리가 없습니다.")
-        return 0
+    try:
+        encoder = _require_encoder()
+    except RuntimeError as exc:
+        print(str(exc), file=sys.stderr)
+        return 1
 
-    for dataset_dir in dataset_dirs:
-        path, total_bytes, splits, schema_lines, sample_lines = _summarize_dataset(dataset_dir)
-
-        print(f"== {path.name} ==")
-        print(f"경로: {path}")
-        print(f"총 크기: {_human_bytes(total_bytes)}")
-        if splits is None:
-            print("split: 알 수 없음")
-        else:
-            print(f"split: {', '.join(splits)}")
-        print("테이블 구조:")
-        for line in schema_lines:
-            print(f"- {line}")
-        print("샘플:")
-        for line in sample_lines:
-            print(f"- {line}")
-        print()
+    dataset_records = [
+        _build_dataset_record(*_summarize_dataset(dataset_dir)) for dataset_dir in dataset_dirs
+    ]
+    output = encoder({"datasets": dataset_records})
+    print(output)
 
     return 0
 
