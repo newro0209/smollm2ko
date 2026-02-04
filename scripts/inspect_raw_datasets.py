@@ -7,7 +7,8 @@ import sys
 from pathlib import Path
 from typing import Callable
 
-from datasets import Dataset, DatasetDict, load_from_disk
+from datasets import Dataset, DatasetDict, NamedSplit, load_from_disk
+
 try:
     from toon_format import encode
 except Exception as exc:  # pragma: no cover - 외부 패키지 로드 실패 대비
@@ -77,7 +78,9 @@ def _format_sample(dataset: Dataset) -> list[str]:
     return lines
 
 
-def _select_dataset(dataset_obj: Dataset | DatasetDict) -> tuple[list[str], Dataset | None]:
+def _select_dataset(
+    dataset_obj: Dataset | DatasetDict,
+) -> tuple[list[str | NamedSplit], Dataset | None]:
     """split 목록과 출력용 Dataset을 선택합니다."""
 
     if isinstance(dataset_obj, DatasetDict):
@@ -94,7 +97,7 @@ def _select_dataset(dataset_obj: Dataset | DatasetDict) -> tuple[list[str], Data
 
 def _summarize_dataset(
     dataset_dir: Path,
-) -> tuple[Path, int, list[str] | None, list[str], list[str]]:
+) -> tuple[Path, int, list[str | NamedSplit] | None, list[str], list[str]]:
     """데이터셋 디렉터리의 요약 정보를 생성합니다."""
 
     total_bytes = _summarize_total_bytes(dataset_dir)
@@ -106,7 +109,7 @@ def _summarize_dataset(
     except Exception as exc:
         load_error = exc
 
-    splits: list[str] | None
+    splits: list[str | NamedSplit] | None
     preview_dataset: Dataset | None
     if dataset_obj is None:
         splits = None
@@ -129,7 +132,7 @@ def _summarize_dataset(
 def _build_dataset_record(
     path: Path,
     total_bytes: int,
-    splits: list[str] | None,
+    splits: list[str | NamedSplit] | None,
     schema_lines: list[str],
     sample_lines: list[str],
 ) -> dict[str, object]:
@@ -198,7 +201,8 @@ def main(argv: list[str] | None = None) -> int:
         return 1
 
     dataset_records = [
-        _build_dataset_record(*_summarize_dataset(dataset_dir)) for dataset_dir in dataset_dirs
+        _build_dataset_record(*_summarize_dataset(dataset_dir))
+        for dataset_dir in dataset_dirs
     ]
     output = encoder({"datasets": dataset_records})
     print(output)
