@@ -6,6 +6,7 @@ readme = "README.md"
 requires-python = ">=3.12,<3.14"
 dependencies = [
     "datasets>=4.5.0",
+    "pyright>=1.1.408",
     "pytest>=8.4.0",
     "torch>=2.10.0",
     "torchvision>=0.25.0",
@@ -14,6 +15,7 @@ dependencies = [
 
 [project.scripts]
 smollm2ko = "smollm2ko.cli:main"
+smollm2ko-download = "scripts.download_dataset:main"
 
 [tool.pyright]
 typeCheckingMode = "basic"
