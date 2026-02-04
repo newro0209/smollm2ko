@@ -17,7 +17,7 @@
 source .venv/bin/activate
 ```
 
-* VSCode + **Pylance** 사용을 강제합니다.
+* IDE 종류와 무관하게 **Pyright 기반 정적 분석을 사용**해야 합니다.
 * 타입 체크 설정은 반드시 `pyproject.toml`에서 관리합니다.
 * `pyrightconfig.json` 사용을 금지합니다.
 
@@ -26,7 +26,8 @@ source .venv/bin/activate
 typeCheckingMode = "basic"
 ```
 
-목표: **Pylance 기준 Type Error 0**
+* 모든 변경은 **Pyright 기준 Type Error 0 상태를 반드시 만족해야 합니다.**
+* 하나라도 타입 에러가 존재할 경우 PR은 즉시 반려됩니다.
 
 ---
 
