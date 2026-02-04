@@ -1,0 +1,208 @@
+"""허깅페이스 데이터셋 다운로드 전 구조 점검 스크립트.
+
+사용법:
+- 단일/복수 이름: python scripts/inspect_hf_datasets.py name1 name2
+- 목록 파일: python scripts/inspect_hf_datasets.py --list names.txt
+"""
+
+from __future__ import annotations
+
+import argparse
+import sys
+from pathlib import Path
+from datasets import (
+    Dataset,
+    DatasetDict,
+    IterableDataset,
+    IterableDatasetDict,
+    NamedSplit,
+    load_dataset,
+)
+
+from toon_format import encode
+
+DatasetLike = Dataset | IterableDataset
+DatasetGroup = DatasetDict | IterableDatasetDict | DatasetLike
+
+
+def _human_bytes(num_bytes: int) -> str:
+    """바이트 수를 사람이 읽기 쉬운 단위로 변환합니다."""
+
+    units = ["B", "KB", "MB", "GB", "TB"]
+    value = float(num_bytes)
+    for unit in units:
+        if value < 1024 or unit == units[-1]:
+            return f"{value:.1f}{unit}"
+        value /= 1024
+    return f"{value:.1f}TB"
+
+
+def _truncate_text(value: object, max_len: int) -> str:
+    """출력 길이를 제한합니다."""
+
+    text = repr(value)
+    if len(text) <= max_len:
+        return text
+    return f"{text[: max_len - 3]}..."
+
+
+def _format_schema(dataset: DatasetLike) -> list[str]:
+    """테이블 구조를 사람이 읽기 쉬운 형태로 변환합니다."""
+
+    features = dataset.features
+    return (
+        [f"{name}: {feature}" for name, feature in features.items()]
+        if features
+        else ["컬럼 정보 없음"]
+    )
+
+
+def _format_sample(dataset: DatasetLike) -> list[str]:
+    """샘플 한 건을 문자열로 변환합니다."""
+
+    try:
+        sample = next(iter(dataset))
+    except StopIteration:
+        return ["샘플 없음"]
+    except Exception as exc:
+        return [f"샘플 로드 실패: {exc}"]
+
+    return (
+        [f"{key}: {_truncate_text(value, 24)}" for key, value in sample.items()]
+        or ["샘플 없음"]
+    )
+
+
+def _select_dataset(dataset: DatasetGroup) -> tuple[list[str | NamedSplit], DatasetLike | None]:
+    """split 목록과 출력용 Dataset을 선택합니다."""
+
+    if isinstance(dataset, (DatasetDict, IterableDatasetDict)):
+        splits = sorted(dataset.keys())
+        return splits, dataset[splits[0]] if splits else None
+
+    return ["single"], dataset
+
+
+def _estimate_total_size(dataset: DatasetGroup | None) -> str:
+    """데이터셋 크기를 최대한 추정합니다."""
+
+    if dataset is None:
+        return "알 수 없음"
+
+    info = getattr(dataset, "info", None)
+    size = getattr(info, "size_in_bytes", None) if info is not None else None
+    return _human_bytes(size) if isinstance(size, int) and size > 0 else "알 수 없음"
+
+
+def _error_summary(
+    name: str,
+    error: Exception | None,
+    splits: list[str | NamedSplit] | None = None,
+) -> tuple[str, str, list[str | NamedSplit] | None, list[str], list[str]]:
+    """로드 실패 정보를 요약합니다."""
+
+    message = "로드 실패" if error is None else f"로드 실패: {error}"
+    if error is not None:
+        print(f"오류: {error}", file=sys.stderr)
+        splits = None
+    return "알 수 없음", name, splits, [message], [message]
+
+
+def _summarize_dataset(
+    name: str,
+) -> tuple[str, str, list[str | NamedSplit] | None, list[str], list[str]]:
+    """허깅페이스 데이터셋 정보를 요약합니다."""
+
+    try:
+        dataset = load_dataset(name)
+    except Exception as exc:
+        return _error_summary(name, exc)
+
+    splits, preview = _select_dataset(dataset)
+    if preview is None:
+        return _error_summary(name, None, splits)
+
+    return (
+        _estimate_total_size(dataset),
+        name,
+        splits,
+        _format_schema(preview),
+        _format_sample(preview),
+    )
+
+
+def _load_dataset_list(path_str: str) -> list[str]:
+    """파일에서 데이터셋 목록을 읽습니다."""
+
+    path = Path(path_str)
+    if not path.exists():
+        msg = f"목록 파일을 찾을 수 없습니다: {path}"
+        raise FileNotFoundError(msg)
+
+    return [
+        cleaned
+        for line in path.read_text(encoding="utf-8").splitlines()
+        if (cleaned := line.strip()) and not cleaned.startswith("#")
+    ]
+
+
+def _dedupe_preserve_order(items: list[str]) -> list[str]:
+    """중복을 제거하면서 입력 순서를 유지합니다."""
+
+    return list(dict.fromkeys(items))
+
+
+def _build_parser() -> argparse.ArgumentParser:
+    """CLI 파서를 구성합니다."""
+
+    parser = argparse.ArgumentParser(description="허깅페이스 데이터셋 다운로드 전 구조 점검")
+    parser.add_argument("name", nargs="*", help="허깅페이스 데이터셋 이름")
+    parser.add_argument(
+        "--list",
+        dest="names",
+        help="데이터셋 목록 파일(한 줄에 하나)",
+        default=None,
+    )
+    return parser
+
+
+def main(argv: list[str] | None = None) -> int:
+    """CLI 엔트리 포인트."""
+
+    parser = _build_parser()
+    args = parser.parse_args(argv)
+
+    names = list(args.name)
+    if args.names:
+        try:
+            names.extend(_load_dataset_list(args.names))
+        except FileNotFoundError as exc:
+            print(f"오류: {exc}", file=sys.stderr)
+            return 2
+
+    names = _dedupe_preserve_order(names)
+
+    if not names:
+        print("오류: 데이터셋 이름을 하나 이상 지정해야 합니다.", file=sys.stderr)
+        return 2
+
+    dataset_records = [
+        {
+            "name": name,
+            "totalSize": total_size,
+            "splits": splits,
+            "schema": schema_lines,
+            "sample": sample_lines,
+        }
+        for name in names
+        for total_size, name, splits, schema_lines, sample_lines in [_summarize_dataset(name)]
+    ]
+
+    output = encode({"datasets": dataset_records})
+    print(output)
+
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
