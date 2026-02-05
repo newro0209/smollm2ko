@@ -25,27 +25,6 @@ DatasetLike = Dataset | IterableDataset
 DatasetGroup = DatasetDict | IterableDatasetDict | DatasetLike
 
 
-def _human_bytes(num_bytes: int) -> str:
-    """바이트 수를 사람이 읽기 쉬운 단위로 변환합니다."""
-
-    units = ["B", "KB", "MB", "GB", "TB"]
-    value = float(num_bytes)
-    for unit in units:
-        if value < 1024 or unit == units[-1]:
-            return f"{value:.1f}{unit}"
-        value /= 1024
-    return f"{value:.1f}TB"
-
-
-def _truncate_text(value: object, max_len: int) -> str:
-    """출력 길이를 제한합니다."""
-
-    text = repr(value)
-    if len(text) <= max_len:
-        return text
-    return f"{text[: max_len - 3]}..."
-
-
 def _format_schema(dataset: DatasetLike) -> list[str]:
     """테이블 구조를 사람이 읽기 쉬운 형태로 변환합니다."""
 
@@ -67,10 +46,7 @@ def _format_sample(dataset: DatasetLike) -> list[str]:
     except Exception as exc:
         return [f"샘플 로드 실패: {exc}"]
 
-    return (
-        [f"{key}: {_truncate_text(value, 24)}" for key, value in sample.items()]
-        or ["샘플 없음"]
-    )
+    return [f"{key}: {value!r}" for key, value in sample.items()] or ["샘플 없음"]
 
 
 def _select_dataset(dataset: DatasetGroup) -> tuple[list[str | NamedSplit], DatasetLike | None]:
@@ -83,34 +59,23 @@ def _select_dataset(dataset: DatasetGroup) -> tuple[list[str | NamedSplit], Data
     return ["single"], dataset
 
 
-def _estimate_total_size(dataset: DatasetGroup | None) -> str:
-    """데이터셋 크기를 최대한 추정합니다."""
-
-    if dataset is None:
-        return "알 수 없음"
-
-    info = getattr(dataset, "info", None)
-    size = getattr(info, "size_in_bytes", None) if info is not None else None
-    return _human_bytes(size) if isinstance(size, int) and size > 0 else "알 수 없음"
-
-
 def _error_summary(
     name: str,
     error: Exception | None,
     splits: list[str | NamedSplit] | None = None,
-) -> tuple[str, str, list[str | NamedSplit] | None, list[str], list[str]]:
+) -> tuple[str, list[str | NamedSplit] | None, list[str], list[str]]:
     """로드 실패 정보를 요약합니다."""
 
     message = "로드 실패" if error is None else f"로드 실패: {error}"
     if error is not None:
         print(f"오류: {error}", file=sys.stderr)
         splits = None
-    return "알 수 없음", name, splits, [message], [message]
+    return name, splits, [message], [message]
 
 
 def _summarize_dataset(
     name: str,
-) -> tuple[str, str, list[str | NamedSplit] | None, list[str], list[str]]:
+) -> tuple[str, list[str | NamedSplit] | None, list[str], list[str]]:
     """허깅페이스 데이터셋 정보를 요약합니다."""
 
     try:
@@ -123,7 +88,6 @@ def _summarize_dataset(
         return _error_summary(name, None, splits)
 
     return (
-        _estimate_total_size(dataset),
         name,
         splits,
         _format_schema(preview),
@@ -189,13 +153,12 @@ def main(argv: list[str] | None = None) -> int:
     dataset_records = [
         {
             "name": name,
-            "totalSize": total_size,
             "splits": splits,
             "schema": schema_lines,
             "sample": sample_lines,
         }
         for name in names
-        for total_size, name, splits, schema_lines, sample_lines in [_summarize_dataset(name)]
+        for name, splits, schema_lines, sample_lines in [_summarize_dataset(name)]
     ]
 
     output = encode({"datasets": dataset_records})
