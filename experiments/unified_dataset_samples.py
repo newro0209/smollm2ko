@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import random
 import textwrap
+from functools import wraps
 from typing import Any, Callable
 
 from datasets import Dataset, concatenate_datasets, load_dataset
@@ -12,19 +13,9 @@ from rich.panel import Panel
 from rich.text import Text
 
 
-DATASET_NAMES = {
-    "koalpaca": "beomi/KoAlpaca-v1.1a",
-    "sharegpt": "dbdu/ShareGPT-74k-ko",
-    "ko_qa": "kikikara/ko_QA_dataset",
-}
 SAMPLE_COUNT = 3
 SEED = 42
 SYSTEM_PROMPT = "당신은 간결하고 정확한 한국어 어시스턴트입니다."
-SOURCE_STYLES = {
-    DATASET_NAMES["koalpaca"]: "bright_green",
-    DATASET_NAMES["sharegpt"]: "bright_cyan",
-    DATASET_NAMES["ko_qa"]: "bright_magenta",
-}
 ROLE_STYLES = {
     "system": "bold bright_yellow",
     "user": "bold bright_blue",
@@ -35,8 +26,33 @@ ROLE_LABELS = {
     "user": "[USR]",
     "assistant": "[ASST]",
 }
+DATASETS: dict[str, Callable[[dict[str, Any]], dict[str, Any]]] = {}
 
 
+def dataset_transform(
+    name: str,
+) -> Callable[
+    [Callable[[dict[str, Any]], dict[str, Any]]],
+    Callable[[dict[str, Any]], dict[str, Any]],
+]:
+    """데이터셋 변환 함수를 등록하고 source 정보를 자동으로 주입하는 데코레이터입니다."""
+
+    def decorator(
+        func: Callable[[dict[str, Any]], dict[str, Any]],
+    ) -> Callable[[dict[str, Any]], dict[str, Any]]:
+        @wraps(func)
+        def wrapper(example: dict[str, Any]) -> dict[str, Any]:
+            result = func(example)
+            result["source"] = name
+            return result
+
+        DATASETS[name] = wrapper
+        return wrapper
+
+    return decorator
+
+
+@dataset_transform("beomi/KoAlpaca-v1.1a")
 def _to_text_koalpaca(example: dict[str, Any]) -> dict[str, Any]:
     """KoAlpaca 예제를 통일 포맷으로 변환합니다."""
 
@@ -48,10 +64,10 @@ def _to_text_koalpaca(example: dict[str, Any]) -> dict[str, Any]:
             {"role": "user", "content": instruction},
             {"role": "assistant", "content": output},
         ],
-        "source": DATASET_NAMES["koalpaca"],
     }
 
 
+@dataset_transform("dbdu/ShareGPT-74k-ko")
 def _to_text_sharegpt(example: dict[str, Any]) -> dict[str, Any]:
     """ShareGPT 예제를 통일 포맷으로 변환합니다."""
 
@@ -60,9 +76,10 @@ def _to_text_sharegpt(example: dict[str, Any]) -> dict[str, Any]:
     for turn in conversations:
         role = "user" if turn.get("from") == "human" else "assistant"
         messages.append({"role": role, "content": turn.get("value", "")})
-    return {"messages": messages, "source": DATASET_NAMES["sharegpt"]}
+    return {"messages": messages}
 
 
+@dataset_transform("kikikara/ko_QA_dataset")
 def _to_text_ko_qa(example: dict[str, Any]) -> dict[str, Any]:
     """ko_QA_dataset 예제를 통일 포맷으로 변환합니다."""
 
@@ -74,32 +91,22 @@ def _to_text_ko_qa(example: dict[str, Any]) -> dict[str, Any]:
             {"role": "user", "content": question},
             {"role": "assistant", "content": answer},
         ],
-        "source": DATASET_NAMES["ko_qa"],
     }
 
-
-def _apply_lazy_transform(
-    dataset: Dataset, transform: Callable[[dict[str, Any]], dict[str, Any]]
-) -> Dataset:
-    """set_transform을 사용해 Lazy Transform을 적용합니다."""
-
-    dataset.set_transform(transform)
-    return dataset
 
 
 def _to_unified_single(example: dict[str, Any]) -> dict[str, Any]:
     """단일 예제를 통일 포맷으로 변환합니다."""
 
-    source = example.get("source")
-    if source == DATASET_NAMES["koalpaca"]:
-        return _to_text_koalpaca(example)
-    if source == DATASET_NAMES["sharegpt"]:
-        return _to_text_sharegpt(example)
-    if source == DATASET_NAMES["ko_qa"]:
-        return _to_text_ko_qa(example)
+    source = str(example.get("source", "unknown"))
+    transform_fn = DATASETS.get(source)
+
+    if transform_fn:
+        return transform_fn(example)
+
     return {
         "messages": [{"role": "system", "content": SYSTEM_PROMPT}],
-        "source": str(source) if source is not None else "unknown",
+        "source": source if source else "unknown",
     }
 
 
@@ -123,23 +130,18 @@ def _to_unified_example(example: dict[str, Any]) -> dict[str, Any]:
 
 
 def build_unified_dataset() -> Dataset:
-    """세 개 데이터셋을 하나처럼 사용하는 Dataset을 구성합니다."""
+    """등록된 모든 데이터셋을 하나처럼 사용하는 Dataset을 구성합니다."""
 
-    koalpaca = load_dataset(DATASET_NAMES["koalpaca"], split="train")
-    sharegpt = load_dataset(DATASET_NAMES["sharegpt"], split="train")
-    ko_qa = load_dataset(DATASET_NAMES["ko_qa"], split="train")
+    datasets = []
+    for name in DATASETS:
+        ds = load_dataset(name, split="train")
+        # source 컬럼을 추가하여 나중에 어떤 변환 함수를 쓸지 식별합니다.
+        ds = ds.add_column("source", [name] * len(ds))  # type: ignore
+        datasets.append(ds)
 
-    datasets = [
-        koalpaca.add_column(
-            "source", [DATASET_NAMES["koalpaca"]] * len(koalpaca)
-        ),
-        sharegpt.add_column(
-            "source", [DATASET_NAMES["sharegpt"]] * len(sharegpt)
-        ),
-        ko_qa.add_column("source", [DATASET_NAMES["ko_qa"]] * len(ko_qa)),
-    ]
     unified = concatenate_datasets(datasets)
-    return _apply_lazy_transform(unified, _to_unified_example)
+    unified.set_transform(_to_unified_example)
+    return unified
 
 
 def main() -> None:
@@ -172,13 +174,11 @@ def main() -> None:
             for line in wrapped[1:]:
                 body.append(" " * (len(role_label) + 2))
                 body.append(f"{line}\n")
-        source_style = SOURCE_STYLES.get(source, "white")
         console.print(
             Panel(
                 body,
-                title=Text(header, style=source_style),
+                title=header,
                 expand=False,
-                border_style=source_style,
             )
         )
 
