@@ -12,6 +12,8 @@ dependencies = [
     "torchvision>=0.25.0",
     "toon-format @ git+https://github.com/toon-format/toon-python.git",
     "transformers>=5.0.0",
+    "ipykernel>=7.1.0",
+    "rich>=14.3.2",
 ]
 
 [project.scripts]
