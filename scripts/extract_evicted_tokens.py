@@ -1,4 +1,4 @@
-"""SmolLM2 vocab의 퇴출 후보 토큰(evicted tokens)을 추출하고 TOON 형식으로 출력합니다."""
+"""SmolLM2 vocab의 교체 후보 토큰(replacement candidates)을 추출하고 TOON 형식으로 출력합니다."""
 
 from __future__ import annotations
 
@@ -122,12 +122,12 @@ def main() -> None:
         level=logging.INFO,
         format="%(asctime)s - %(levelname)s - %(message)s",
         handlers=[
-            logging.FileHandler("extract_evicted_tokens.log", encoding="utf-8")
+            logging.FileHandler("extract_replacement_candidates.log", encoding="utf-8")
         ],
     )
     logger = logging.getLogger(__name__)
     logger.info("=" * 60)
-    logger.info("퇴출 후보 토큰 추출 작업 시작")
+    logger.info("교체 후보 토큰 추출 작업 시작")
 
     disable_progress_bars()
 
@@ -135,7 +135,7 @@ def main() -> None:
     # 2️⃣ CLI 인자 파싱 및 검증
     # ============================================================
     parser = argparse.ArgumentParser(
-        description="Extract evicted token candidates for vocabulary adaptation in TOON format"
+        description="Extract replacement token candidates for vocabulary adaptation in TOON format"
     )
     parser.add_argument(
         "model_name",
@@ -150,10 +150,10 @@ def main() -> None:
         default="HuggingFaceTB/smol-smoltalk",
     )
     parser.add_argument(
-        "--eviction-ratio",
+        "--replacement-ratio",
         type=float,
         default=0.3,
-        help="퇴출할 토큰의 비율 (0.0 ~ 1.0, 기본값: 0.3)",
+        help="교체할 토큰의 비율 (0.0 ~ 1.0, 기본값: 0.3)",
     )
     parser.add_argument(
         "-o",
@@ -164,12 +164,12 @@ def main() -> None:
     )
     args = parser.parse_args()
     logger.info(
-        f"입력 인자: model={args.model_name}, dataset={args.dataset_name}, eviction_ratio={args.eviction_ratio}"
+        f"입력 인자: model={args.model_name}, dataset={args.dataset_name}, replacement_ratio={args.replacement_ratio}"
     )
 
-    if not 0.0 <= args.eviction_ratio <= 1.0:
-        logger.error(f"잘못된 eviction-ratio 값: {args.eviction_ratio}")
-        raise ValueError("eviction-ratio must be between 0.0 and 1.0")
+    if not 0.0 <= args.replacement_ratio <= 1.0:
+        logger.error(f"잘못된 replacement-ratio 값: {args.replacement_ratio}")
+        raise ValueError("replacement-ratio must be between 0.0 and 1.0")
 
     # ============================================================
     # 3️⃣ 재현성을 위한 시드 설정
@@ -243,7 +243,7 @@ def main() -> None:
     logger.info(f"토큰 카운팅 완료 (고유 토큰 수={len(token_counter)})")
 
     # ============================================================
-    # 7️⃣ 퇴출 후보 토큰 선정 (미사용 + 저빈도)
+    # 7️⃣ 교체 후보 토큰 선정 (미사용 + 저빈도)
     # ============================================================
     logger.info("제거 가능한 토큰 필터링 시작 (스페셜 토큰, 숫자, 특수문자 제외)")
     vocab_size = len(tokenizer)
@@ -262,16 +262,16 @@ def main() -> None:
     ]
     logger.info(f"미사용 토큰 수: {len(unused_tokens)}")
 
-    num_evicted = max(1, int(len(prunable_tokens) * args.eviction_ratio))
+    num_replacements = max(1, int(len(prunable_tokens) * args.replacement_ratio))
     logger.info(
-        f"퇴출 후보 목표 개수: {num_evicted} (비율={args.eviction_ratio})"
+        f"교체 후보 목표 개수: {num_replacements} (비율={args.replacement_ratio})"
     )
 
-    num_unused = min(len(unused_tokens), num_evicted)
+    num_unused = min(len(unused_tokens), num_replacements)
     selected_unused = unused_tokens[:num_unused]
     logger.info(f"선택된 미사용 토큰 수: {num_unused}")
 
-    num_low_freq = max(0, num_evicted - num_unused)
+    num_low_freq = max(0, num_replacements - num_unused)
 
     # 저빈도 토큰도 제거 가능한 토큰 중에서만 선택
     prunable_token_set = set(prunable_tokens)
@@ -285,9 +285,9 @@ def main() -> None:
     )
     logger.info(f"선택된 저빈도 토큰 수: {len(low_freq_prunable)}")
 
-    evicted_tokens = set(selected_unused) | {tid for tid, _ in low_freq_prunable}
-    logger.info(f"총 퇴출 예정 토큰 수: {len(evicted_tokens)}")
-    logger.info(f"퇴출 토큰 샘플 (최대 5개): {sorted(list(evicted_tokens))[:5]}")
+    replacement_candidates = set(selected_unused) | {tid for tid, _ in low_freq_prunable}
+    logger.info(f"총 교체 후보 토큰 수: {len(replacement_candidates)}")
+    logger.info(f"교체 후보 토큰 샘플 (최대 5개): {sorted(list(replacement_candidates))[:5]}")
 
     # ============================================================
     # 8️⃣ TOON 형식으로 결과 변환
@@ -299,7 +299,7 @@ def main() -> None:
                 [token_id], clean_up_tokenization_spaces=False
             )
         }
-        for token_id in sorted(evicted_tokens)  # 정렬하여 일관성 있는 출력
+        for token_id in sorted(replacement_candidates)  # 정렬하여 일관성 있는 출력
     ]
 
     output_content = encode(result)
@@ -321,7 +321,7 @@ def main() -> None:
         print(output_content)
         logger.info("결과를 stdout으로 출력 완료")
 
-    logger.info("퇴출 후보 토큰 추출 작업 완료")
+    logger.info("교체 후보 토큰 추출 작업 완료")
     logger.info("=" * 60)
 
 
