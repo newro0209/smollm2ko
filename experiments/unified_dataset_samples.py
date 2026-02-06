@@ -7,7 +7,8 @@ import textwrap
 from functools import wraps
 from typing import Any, Callable
 
-from datasets import Dataset, concatenate_datasets, load_dataset
+from datasets import Dataset, concatenate_datasets, load_dataset, DatasetDict
+from datasets.combine import DatasetType
 from rich.console import Console
 from rich.panel import Panel
 from rich.text import Text
@@ -132,14 +133,14 @@ def _to_unified_example(example: dict[str, Any]) -> dict[str, Any]:
 def build_unified_dataset() -> Dataset:
     """등록된 모든 데이터셋을 하나처럼 사용하는 Dataset을 구성합니다."""
 
-    datasets = []
+    datasets: list[Dataset] = []
     for name in DATASETS:
         ds = load_dataset(name, split="train")
         # source 컬럼을 추가하여 나중에 어떤 변환 함수를 쓸지 식별합니다.
         ds = ds.add_column("source", [name] * len(ds))  # type: ignore
         datasets.append(ds)
 
-    unified = concatenate_datasets(datasets)
+    unified = concatenate_datasets(dsets=datasets)
     unified.set_transform(_to_unified_example)
     return unified
 
